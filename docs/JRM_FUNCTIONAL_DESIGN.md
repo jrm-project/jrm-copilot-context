@@ -449,22 +449,60 @@ Operations initiated through the console should produce an audit/activity record
 
 ### Security model
 
-`jrm-ops` is intended to be internal-only.
+`jrm-ops` is internal-only.
+
+The settled network and access model is:
+
+- host: `jet`;
+- address: `192.168.0.70`;
+- TCP port: `8200`;
+- bind specifically to `192.168.0.70:8200`, not `0.0.0.0`;
+- allowed client network: `192.168.0.0/24`;
+- no application-level login for LAN access;
+- no Cloudflare exposure;
+- no public DNS;
+- no nginx dependency;
+- HTTP is acceptable on the trusted LAN;
+- TCP/8200 must have a persistent nftables restriction allowing the JRM LAN and rejecting access from other source networks.
+
+The existing host currently uses persistent nftables configuration through `/etc/nftables.conf` and `nftables.service`. The `jrm-ops` firewall implementation must be narrowly scoped to TCP/8200 and must not change the existing SSH, Production, Test 1 or Test 2 exposure as part of this work.
+
+LAN membership is the access-control boundary for the web interface. The absence of an application login does not remove the requirement for operational safeguards on state-changing functions.
 
 The console must not become a generic shell exposed through a web UI.
 
-The implementation should:
+The implementation must:
 
 - expose only explicitly approved operations;
 - validate action parameters against constrained expected values;
 - avoid arbitrary command construction/execution;
 - use the least privilege necessary for each operation;
-- preserve existing deployment confirmations and safeguards;
-- provide stronger confirmation for Production/destructive operations;
+- run the web process under a dedicated non-login `jrm-ops` service identity, separate from the existing `jrm` application identity;
+- never run the web application itself as root;
+- grant no generic shell or unrestricted sudo capability;
+- use a root-owned, repository-controlled allowlist helper for operations that genuinely require root privilege;
+- protect every state-changing web request with CSRF protection;
+- preserve existing deployment confirmations, locking, validation and rollback safeguards;
 - avoid exposing secrets in status output or activity history;
 - preserve a clear boundary between status/read operations and change operations.
 
-Existing service and privilege arrangements have now been inspected. The final `jrm-ops` service identity, internal bind address/port, systemd hardening, privilege-escalation mechanism and application-state locations remain proposed implementation decisions and must not be treated as deployed facts.
+The privileged helper is intended to be installed as `/usr/local/sbin/jrm-ops-helper`. Its operation grammar must be explicit and closed. It must reject unsupported operations, malformed environment names, invalid release IDs and arbitrary command arguments rather than passing user input to a shell.
+
+Routine status collection should remain non-root wherever possible.
+
+For Research/AI status, `jrm-ops` must use its own dedicated Ed25519 SSH key rather than accessing or reusing `/root/.ssh/jrm-research-status`. The corresponding public key on `jrm-research` must use the existing forced-command security model:
+
+`restrict,command="/usr/local/bin/jrm-research-status"`
+
+This provides access only to the verified read-only Research status collector and does not provide an interactive shell, forwarding or PTY access.
+
+Production deployment requires an additional explicit UI confirmation even though LAN access itself is unauthenticated. The administrator must type the exact selected release ID before the Production action is accepted. The privileged backend must then preserve the existing `jrm-deploy` requirement by setting:
+
+`JRM_PRODUCTION_CONFIRM=<exact-release-id>`
+
+The UI confirmation supplements the existing deploy safeguard; it does not replace or bypass it.
+
+The exact systemd hardening options and application-state storage locations remain implementation decisions and must be recorded in `docs/JRM_AS_BUILT.md` from the implemented configuration.
 
 ### Failure behaviour
 
@@ -717,10 +755,8 @@ The initial structured contracts should provide, at minimum:
 
 The inspection intentionally does not establish the following, so these remain proposed decisions rather than facts:
 
-- `jrm-ops` service username/group;
-- internal bind address and port;
-- authentication/session model for the internal console;
-- exact sudo/polkit/helper design used to cross the root privilege boundary;
+- exact systemd hardening options for the dedicated `jrm-ops` service;
+- exact implementation and operation grammar of the root-owned `jrm-ops-helper`;
 - exact storage/schema for `jrm-ops` activity records and cached status;
 - exact JSON schemas and versioning for structured tool output;
 - exact non-root Git credential mechanism for publishing `jrm-copilot-context`;
