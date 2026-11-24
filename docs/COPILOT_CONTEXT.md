@@ -59,6 +59,29 @@ Never guess JRM technical details, including:
 
 Inspect actual source, configuration, Git state, release metadata, or command output before providing commands or implementation guidance.
 
+## Design and documentation lifecycle
+
+`docs/JRM_FUNCTIONAL_DESIGN.md` is the authoritative source for functional intent: what JRM is intended to do and why.
+
+For substantial new functionality or material behavioural changes:
+
+1. Define the functional intent before implementation.
+2. Clearly label unimplemented behaviour as proposed.
+3. Inspect the existing source, configuration, tooling and live environment before finalising technical integration details.
+4. Never convert an unverified technical assumption into documented fact.
+5. Implement the feature and applicable documentation together on the same feature branch.
+6. Review documentation impact before promotion:
+   - functional or scope change -> `docs/JRM_FUNCTIONAL_DESIGN.md`;
+   - infrastructure, deployment, service or material technical change -> `docs/JRM_AS_BUILT.md`;
+   - administrator-visible change -> `docs/JRM_ADMIN_GUIDE.md`;
+   - JRM engineering/operating-rule change -> `docs/COPILOT_CONTEXT.md`.
+7. Where documentation review confirms that no content change is required, record that review explicitly rather than making a meaningless edit.
+8. After Production verification, reconcile the As-Built with actual deployed state.
+9. Commit authoritative private documentation before synchronising approved operational documentation to the public Copilot context repository.
+10. Never edit the public documentation as the source of truth and copy changes backwards.
+
+Documentation is part of implementation, not a separate task to complete afterwards.
+
 ## Change workflow
 
 For application/admin changes:
@@ -154,6 +177,23 @@ When a change modifies an Admin screen, field, button, workflow, validation rule
 - verify the guide against the implemented templates and backend behaviour;
 - do not document proposed functionality as though it is already implemented;
 - publish the updated guide to the public Copilot context repository after the authoritative private documentation is committed.
+
+## Definition of Done
+
+A JRM change is complete only when the requirements applicable to that change are satisfied:
+
+- implementation/configuration is committed to the authoritative private repository;
+- implementation matches the agreed functional intent;
+- relevant syntax, static, test, secret, diff and documentation checks pass;
+- Functional Design accurately reflects material functional/scope changes;
+- administrator-visible behaviour has been reviewed against `docs/JRM_ADMIN_GUIDE.md` and changed behaviour is documented;
+- material infrastructure/technical changes are reflected in `docs/JRM_AS_BUILT.md`;
+- application releases use the same immutable release through Test 1, Test 2 and Production;
+- guarded Production deployment and post-deployment health/functional checks pass where applicable;
+- final private documentation describes verified reality;
+- public operational documentation is credential/safety checked and synchronised only after the authoritative private documentation is committed.
+
+Do not treat successful code execution alone as completion when the change has an applicable design, operational, deployment or documentation requirement.
 
 ## Current checkpoint summary
 
