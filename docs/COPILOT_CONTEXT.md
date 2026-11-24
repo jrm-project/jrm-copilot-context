@@ -145,6 +145,16 @@ When infrastructure, deployment tooling, service layout, versions, or material e
 - commit the documentation with, or immediately adjacent to, the change it describes;
 - do not knowingly leave deployed state and documentation inconsistent.
 
+`docs/JRM_ADMIN_GUIDE.md` is the operating manual for the administrator-facing JRM interface.
+
+When a change modifies an Admin screen, field, button, workflow, validation rule, side effect, warning, or operating procedure:
+
+- review `docs/JRM_ADMIN_GUIDE.md` in the same feature branch;
+- update the relevant guide section before promotion to Production;
+- verify the guide against the implemented templates and backend behaviour;
+- do not document proposed functionality as though it is already implemented;
+- publish the updated guide to the public Copilot context repository after the authoritative private documentation is committed.
+
 ## Current checkpoint summary
 
 At the checkpoint that created this context:
