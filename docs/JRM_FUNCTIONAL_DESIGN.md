@@ -339,7 +339,7 @@ Fill this section only after existing-state inspection. Record verified interfac
 
 ## 5. JRM Operations Console (`jrm-ops`)
 
-**Status:** Proposed. Existing deployment/status tooling has not yet been inspected for the purpose of this design section, so technical integration details remain intentionally unfilled.
+**Status:** Proposed, with existing-state inspection completed for the current status, release-build, deployment, privilege, deployment-history, Research-status and public-documentation interfaces. Implementation has not started.
 
 ### Purpose
 
@@ -464,7 +464,7 @@ The implementation should:
 - avoid exposing secrets in status output or activity history;
 - preserve a clear boundary between status/read operations and change operations.
 
-The final access/bind/port/service model remains to be established by inspection and technical design. No port, service account, sudo rule or filesystem location is asserted here yet.
+Existing service and privilege arrangements have now been inspected. The final `jrm-ops` service identity, internal bind address/port, systemd hardening, privilege-escalation mechanism and application-state locations remain proposed implementation decisions and must not be treated as deployed facts.
 
 ### Failure behaviour
 
@@ -506,19 +506,225 @@ Before `jrm-ops` v1 can be considered implemented:
 
 ### Verified technical integration
 
-**Pending existing-state inspection.**
+Existing-state inspection has been completed for the interfaces required to define the initial `jrm-ops` technical integration. The facts below are verified from the current repository-controlled tools and live `jet` configuration. Items explicitly labelled **Proposed** remain design decisions and are not yet implemented.
 
-Before implementation, inspect the actual current interfaces and implementation for:
+#### Existing operational tool model
 
-- `jrm-status`;
-- `jrm-build-release`;
-- `jrm-deploy`;
-- immutable release structure;
-- Test 1/Test 2/Production deployment behaviour;
-- Git/source state checks;
-- systemd/service privileges relevant to wrapped operations;
-- public operational-documentation publication workflow;
-- rollback behaviour;
-- available machine-readable or stable output suitable for the UI.
+The installed operational commands are:
 
-Fill this section from verified evidence before coding `jrm-ops`.
+- `/usr/local/bin/jrm-status`
+- `/usr/local/bin/jrm-build-release`
+- `/usr/local/bin/jrm-deploy`
+
+Their authoritative repository sources are:
+
+- `tools/jrm-status`
+- `tools/jrm-build-release`
+- `tools/jrm-deploy`
+
+Inspection verified that each installed command is byte-for-byte identical to its repository-controlled source. `tools/jrm-research-status` is also repository-controlled and supports the restricted Research-host status path.
+
+`jrm-ops` must wrap these established operational tools rather than reproduce their release, health or deployment logic inside the web application.
+
+#### Status integration
+
+`jrm-status` is currently version `0.3.0`. It checks:
+
+- source repository, branch, exact tag, commit and origin;
+- working-tree cleanliness;
+- synchronization with the locally known upstream;
+- Production, Test 1 and Test 2 release identity, release metadata, checksum integrity and service state;
+- Research and Agent source hashes;
+- Research, Agent and Ollama service state;
+- Research and Agent HTTP checks;
+- expected Ollama version/model;
+- expected SearXNG and Valkey image digests.
+
+Its overall exit contract is:
+
+- `0`: no warning or failure checks;
+- `1`: one or more unknown/warning checks and no failures;
+- `2`: one or more drift/failure checks.
+
+Research status is collected from `192.168.0.34` using the dedicated restricted key `/root/.ssh/jrm-research-status`, rather than duplicating remote inspection logic locally.
+
+**Proposed structured interface:** extend the repository-controlled `jrm-status` with a backwards-compatible `--json` output mode. Invocation without `--json` must retain the existing human-readable output and exit-code semantics. `jrm-ops` should consume the structured mode rather than scrape formatted shell output. The JSON contract should expose both the overall result and the individual source, environment and Research checks needed by the dashboard.
+
+`jrm-ops` should cache the most recent completed status result and refresh it approximately every five minutes. A manual refresh and completion of any operational action should request a fresh status immediately. Overlapping status runs should be prevented or coalesced.
+
+#### Immutable release build integration
+
+`jrm-build-release` is currently version `0.1.0` and has the verified interface:
+
+```text
+jrm-build-release <release-id> <full-commit-sha>
+```
+
+The builder already enforces the core immutable-release rules:
+
+- release IDs are syntax constrained and cannot overwrite an existing release;
+- the commit must be an exact 40-character lowercase SHA available in Git;
+- `/srv/jrm-source` must have a clean working tree;
+- payload content is built from `git archive` of the requested commit, not from mutable working-tree files;
+- required application, frontend, migration, requirements, version and migration-checksum paths must exist in that commit;
+- migration checksums are validated;
+- Production, Test 1 and Test 2 payloads are built into the same immutable release;
+- `RELEASE-METADATA` records release ID, commit, tag, source version, build time, builder version and requirements hash;
+- `SHA256SUMS` covers the completed release payload and is validated before publication;
+- release directories/files are made read-only before the final atomic move to `/opt/jrm-releases/<release-id>`.
+
+The builder uses fail-fast shell behaviour and already distinguishes usage/input/repository/release/build failures with exit codes in the `64` to `70` range.
+
+`jrm-ops` should pass only a validated release ID and exact full commit SHA to this tool. The web application must not create shell command strings from arbitrary user input.
+
+**Proposed structured interface:** preserve the current CLI while adding a stable machine-consumable result mode or wrapper contract that exposes release ID, commit, final path, file count, success/failure category and diagnostic message without requiring the UI to scrape presentation text.
+
+#### Guarded deployment integration
+
+`jrm-deploy` is currently version `0.3.0` and has the verified interface:
+
+```text
+jrm-deploy <test1|test2|production> <release-id>
+```
+
+Production additionally requires:
+
+```text
+JRM_PRODUCTION_CONFIRM=<release-id>
+```
+
+The verified environment mapping is:
+
+| Environment | Link | Service | Port | Environment file | Persistent state |
+| --- | --- | --- | --- | --- | --- |
+| Test 1 | `/opt/jrm-test1` | `jrm-test1.service` | 8101 | `/etc/jrm/jrm-test1.env` | `/var/lib/jrm-test1` |
+| Test 2 | `/opt/jrm-test2` | `jrm-test2.service` | 8102 | `/etc/jrm/jrm-test2.env` | `/var/lib/jrm-test2` |
+| Production | `/opt/jrm` | `jrm.service` | 8000 | `/etc/jrm/jrm.env` | `/var/lib/jrm` |
+
+The deployer requires root and already protects deployment with `/run/lock/jrm-deploy.lock`. It verifies, before switching:
+
+- repository availability;
+- target payload, release metadata and checksum manifest;
+- environment file;
+- persistent `site.db` and uploads directory;
+- shared runtime executables;
+- existing environment symlink and valid previous target;
+- release checksums;
+- release metadata identity and exact Git commit;
+- requirements metadata hash;
+- exact package equality between the shared runtime and release requirements.
+
+Production additionally requires the release commit to be contained in both local `main` and `origin/main` and requires a clean source working tree.
+
+Deployment stops the environment service, atomically switches the environment symlink, and restarts the service. Post-switch verification requires:
+
+- the service to be active;
+- `/health` to return HTTP 200;
+- `/` to return HTTP 200;
+- Gunicorn to be running from `/opt/jrm-runtime/venv` on the expected environment port;
+- the environment symlink and key deployed files to match the selected immutable release.
+
+If post-switch service/health/runtime/content verification fails, the existing deployer automatically attempts rollback to the previous target and verifies recovery. `jrm-ops` must preserve this behaviour rather than provide a separate symlink-switch path.
+
+The current deploy exit contract distinguishes usage/confirmation errors, precheck failures, switch failures, successful rollback, failed rollback and deployment-lock contention. The UI must surface these as distinct operation outcomes rather than flattening them into a generic failure.
+
+#### Existing deployment audit data
+
+`jrm-deploy` records tab-separated deployment history at `/var/lib/jrm-deploy/history.tsv` and also logs through syslog. The history directory/file are root controlled (`0750` directory, `0640` file at inspection time).
+
+Existing history includes successful Test 1, Test 2 and Production deployments, precheck failures and a verified automatic rollback event. The fields already recorded are sufficient to seed the Deployment Activity view: timestamp, environment, release ID, release commit, previous target, target, result and invoking user.
+
+`jrm-ops` should supplement, not replace, this deployment record with its own broader activity log for actions such as status refresh, validation, release build and operational-document publication.
+
+#### Service and privilege boundary
+
+The current JRM application services run as `jrm:jrm` with a nologin account. The three website services are systemd services and do not run as root. No JRM-specific sudoers rules existed at inspection time. Root ownership currently protects the source repository, release store, shared runtime and deployment history.
+
+`jrm-deploy` genuinely requires privileged operations because it controls systemd services, environment symlinks, deployment locks and root-owned history. Therefore the `jrm-ops` web process must **not** run as root merely to invoke deployment actions.
+
+**Proposed privilege model:**
+
+- create a dedicated non-login service identity for `jrm-ops`, separate from the existing `jrm` website identity;
+- run the `jrm-ops` web service under that dedicated identity;
+- grant no generic shell or unrestricted `sudo`;
+- expose privileged operations only through specifically approved command entry points with constrained argument validation;
+- retain `jrm-deploy`'s own validation, Production confirmation, lock and rollback behaviour behind the privilege boundary;
+- grant read access only to the status/history/source/release metadata required by the UI;
+- ensure operation logs do not expose environment-file secrets or authentication material.
+
+The exact service username, systemd hardening options, bind address/port, and sudo/polkit mechanism remain implementation decisions. They must be selected and then documented in `docs/JRM_AS_BUILT.md` from the implemented configuration.
+
+#### Enrichment operational state
+
+Existing systemd units include `jrm-enrichment-worker.service` and `jrm-enrichment-worker.timer`. At inspection time the timer was disabled. The current Admin application already contains explicit enable/disable and run-one controls for automatic enrichment. `jrm-ops` may surface status for these components, but v1 must not create a second independent enrichment control path without an explicit design decision and corresponding Admin Guide update.
+
+#### Operational-document publication integration
+
+The authoritative operational documents in `/srv/jrm-source/docs` are:
+
+- `COPILOT_CONTEXT.md`;
+- `JRM_FUNCTIONAL_DESIGN.md`;
+- `JRM_AS_BUILT.md`;
+- `JRM_ADMIN_GUIDE.md`.
+
+The public body-of-knowledge working copy is `/srv/jrm-copilot-context`, tracking `git@github.com:jrm-project/jrm-copilot-context.git`. It uses a repository-specific SSH command configured locally with the dedicated key `/root/.ssh/jrm-copilot-context` and `IdentitiesOnly=yes`.
+
+At inspection time all four private/public operational-document pairs had identical SHA-256 hashes and both repositories were clean.
+
+The existing publication procedure is private-source-first:
+
+1. commit authoritative documentation in `jrm-project/jrm`;
+2. copy approved operational documents into `/srv/jrm-copilot-context/docs`;
+3. run credential/secret and diff/whitespace validation;
+4. commit and push `jrm-project/jrm-copilot-context`;
+5. allow the public GitHub Pages publication to rebuild.
+
+`jrm-ops` should automate this established direction of travel. It must compare private/public SHA-256 values and show per-document synchronisation state before publication. It must never treat the public repository as authoritative or copy documentation backwards.
+
+Because the existing public-repository SSH credential is stored under `/root/.ssh`, the final non-root publication mechanism must be deliberately redesigned rather than granting the web process access to root's private key. The approved mechanism and credential location must be established during implementation and recorded in the As-Built.
+
+#### Activity and concurrency model
+
+**Proposed:** `jrm-ops` should serialize consequential operations so that a release build/deploy/publication action cannot race another conflicting operation. Existing `jrm-deploy` locking remains authoritative for deployments; the console should additionally maintain an application-level operation state for UI gating and auditability.
+
+Each operation record should include:
+
+- start and completion timestamp;
+- operator identity available to `jrm-ops`;
+- operation type;
+- target environment where applicable;
+- source commit;
+- release ID where applicable;
+- invoked approved backend operation;
+- exit/result category;
+- concise diagnostic summary.
+
+Raw output may be retained for troubleshooting subject to size limits and secret filtering, but must not be used as the sole structured state model.
+
+#### UI/backend interface requirements
+
+The UI must consume stable structured state rather than parse terminal-oriented presentation text. The preferred design is to evolve repository-controlled operational tools with backwards-compatible structured modes where needed. Existing human CLI behaviour must remain usable for direct administration and troubleshooting.
+
+The initial structured contracts should provide, at minimum:
+
+- consolidated status/check data from `jrm-status`;
+- immutable release build result data;
+- deployment operation/result data while preserving `jrm-deploy` exit/rollback semantics;
+- per-document private/public hash and Git-state data;
+- deployment/activity history required by the Operations dashboard.
+
+#### Remaining implementation decisions
+
+The inspection intentionally does not establish the following, so these remain proposed decisions rather than facts:
+
+- `jrm-ops` service username/group;
+- internal bind address and port;
+- authentication/session model for the internal console;
+- exact sudo/polkit/helper design used to cross the root privilege boundary;
+- exact storage/schema for `jrm-ops` activity records and cached status;
+- exact JSON schemas and versioning for structured tool output;
+- exact non-root Git credential mechanism for publishing `jrm-copilot-context`;
+- whether rollback is initially exposed as an explicit button in addition to the existing automatic rollback path;
+- whether enrichment timer/run-one controls belong in `jrm-ops` v1 or remain only in the existing Admin interface.
+
+These decisions must be resolved in design/implementation before the associated capability is exposed.
