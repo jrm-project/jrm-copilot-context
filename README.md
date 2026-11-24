@@ -10,6 +10,7 @@ For any JRM session, read these documents first:
 
 1. [Copilot operating context](docs/COPILOT_CONTEXT.md)
 2. [JRM as-built technical documentation](docs/JRM_AS_BUILT.md)
+3. [JRM Administration Guide](docs/JRM_ADMIN_GUIDE.md)
 
 ## Important
 
